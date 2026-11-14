@@ -34,6 +34,7 @@ struct StatsContent: View {
                         distribution(snapshot)
                     }
                     projectTree(snapshot)
+                    AttributionSection(snapshot: snapshot)
                 }
                 .padding(16)
             }

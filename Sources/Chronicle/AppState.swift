@@ -107,7 +107,29 @@ final class AppState: ObservableObject {
 
     /// 统计页选中的范围（日 / 周 / 月 / 年）。
     @Published var statisticsRange: StatisticsRange = .day
+    /// 归因记录变更后递增，驱动视图刷新。
+    @Published var attributionRevision = 0
     private var statisticsCache: [String: StatisticsSnapshot] = [:]
+
+    /// 某项目某天的归因（没有记录时返回空草稿）。
+    func attributionValue(projectKey: String, day: Date) -> Attribution {
+        let key = Attribution.dayKey(day)
+        return store.attribution(projectID: projectKey, day: key)
+            ?? Attribution(projectID: projectKey, day: key)
+    }
+
+    func saveAttribution(_ item: Attribution) {
+        store.saveAttribution(item)
+        attributionRevision &+= 1
+    }
+
+    /// 按日期范围读取归因记录，用于周 / 月汇总。
+    func attributions(in interval: DateInterval) -> [Attribution] {
+        store.attributions(
+            from: Attribution.dayKey(interval.start),
+            to: Attribution.dayKey(interval.end.addingTimeInterval(-1))
+        )
+    }
 
     /// 统计快照：与应用口径、时间轴共用同一套 WorkSlice。
     func statistics(_ range: StatisticsRange) -> StatisticsSnapshot {

@@ -2,7 +2,7 @@ import Foundation
 
 public final class ChronicleStore {
     public let path: String
-    private let db: SQLiteDatabase
+    let db: SQLiteDatabase
 
     public static var defaultDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -61,6 +61,16 @@ public final class ChronicleStore {
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS attribution (
+            project_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            has_unexpected INTEGER NOT NULL DEFAULT 0,
+            unexpected_detail TEXT NOT NULL DEFAULT '',
+            can_optimize INTEGER NOT NULL DEFAULT 0,
+            optimization_detail TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (project_id, day)
         );
         """)
         migrateProjectColumns()
