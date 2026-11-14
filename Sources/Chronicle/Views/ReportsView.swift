@@ -457,7 +457,7 @@ struct ReportTable: NSViewRepresentable {
         tableView.gridStyleMask = []
         tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = false
-        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.autoresizingMask = [.width]
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
         tableView.dataSource = context.coordinator
@@ -485,12 +485,9 @@ struct ReportTable: NSViewRepresentable {
         context.coordinator.configure(rows: rows, columns: columns, onSort: onSort, onAssign: onAssign, onEdit: onEdit, onDelete: onDelete, projects: projects)
         context.coordinator.syncColumns(columns, in: tableView)
         let available = max(width, 320)
-        let needed = columns.reduce(0) { $0 + $1.width } + 12
+        let needed = columns.reduce(0) { $0 + $1.width }
+        // 列总宽不足时把表格拉满视口，最后一列由 AppKit 自动吃掉剩余宽度。
         tableView.frame = NSRect(x: 0, y: 0, width: max(needed, available), height: max(tableView.frame.height, 1))
-        // 列总宽不足时把多余宽度补给「描述」列，避免右侧留一条空白。
-        if let last = tableView.tableColumns.last, available > needed {
-            last.width += available - needed
-        }
         if context.coordinator.needsReload {
             tableView.reloadData()
             context.coordinator.needsReload = false

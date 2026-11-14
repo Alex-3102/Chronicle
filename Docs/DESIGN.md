@@ -56,11 +56,12 @@ Chronicle/
 | --- | --- |
 | `projects` | 项目树。`parent_id` 形成无限层级，`sort_order` 决定同级顺序，`color_hex` 是项目颜色，`is_archived` 标记归档 |
 | `entries` | 时间条目（手动新建 / 定时器 / 临时计时产生），`project_id` 为空即「未分配」 |
-| `app_usage` | 前台应用使用记录：`bundle_id`、`app_name`、`start_at`、`end_at`、`window_title` |
+| `app_usage` | 前台应用使用记录：`bundle_id`、`app_name`、`start_at`、`end_at`、`window_title`、`project_id`（手动归属）、`url`、`file_path` |
+| `attribution` | 耗时归因，主键 `(project_id, day)`：`reason`、`has_unexpected`、`unexpected_detail`、`can_optimize`、`optimization_detail` |
 | `settings` | 键值配置（外观、时间轴最大缩放等） |
 | `pinyin_cache` | 项目名的拼音/首字母缓存，原文仍存在 `projects` |
 
-迁移策略：建表后通过 `PRAGMA table_info` 检查列是否存在，再用 `ALTER TABLE ... ADD COLUMN` 补列（`is_archived`、`window_title`），旧库可直接升级。
+迁移策略：建表后通过 `PRAGMA table_info` 检查列是否存在，再用 `ALTER TABLE ... ADD COLUMN` 补列（`is_archived`、`window_title`、`project_id`、`url`、`file_path`），旧库可直接升级。
 
 ## 3. 界面结构
 
@@ -120,8 +121,15 @@ Chronicle/
 
 ### 4.3 时长口径
 
-- `clampedDuration` 把每个条目的时长裁剪到当前查看的那一天，避免跨天条目把两侧都算满。
-- 「全部活动」= max(应用使用时长, 已分配条目时长)；「未分配」= 全部活动 − 已分配到项目的时长。应用使用时长按区间合并计算，重叠不会重复累加。
+应用记录与时间条目描述的是同一段时间的两种视角，不能相加。统一入口是 `TimeAccounting`：
+
+- `WorkSlice`：把 `[from, to)` 按所有应用记录 / 时间条目的起止边界切开，每片只有一个活动与一个归属项目。归属规则：条目优先于应用记录，开始时间晚的条目优先（嵌套条目取最内层），`id` 兜底；相邻同值的切片合并。
+- `WorkSpan`：只看时间条目切出的项目归属区间，无条目覆盖的时段不产生 span（时间轴上显示为「未分配」）。
+- `unionDuration(_:)`：按区间合并求并集时长，重叠不会重复累加。
+- `AccountingSnapshot`（`Services/AccountingSnapshot.swift`）：把切片 + 跨度冻结成一份快照，`allTotal` / `trackedTotal` / `assignedTotal` / `unassignedTotal` 全部由它派生，缓存键是 `dataRevision`，避免每次绘制都重算。
+- 跨天条目仍用 `clampedDuration` 裁剪到当天。
+
+「全部活动」= max(应用使用时长, 已分配条目时长)；「未分配」= 全部活动 − 已分配到项目的时长。
 
 ### 4.3.1 统计与报告的筛选范围
 
@@ -148,7 +156,7 @@ point(u, v) = 横向 ? (x: u, y: v) : (x: v, y: u)
 rect(uStart, uLength, vStart, vThickness) = 横向 ? (x,y,w,h) : (x: vStart, y: uStart, w: vThickness, h: uLength)
 ```
 
-`pixelsPerHour = (视口主轴长度 − 2 × timeInset) / 24 × zoom`，因此 1 倍时刚好铺满一天。记录先裁剪到展示范围再布局，原始起止时间不动。
+`pixelsPerHour = (视口主轴长度 − 2 × timeInset) / 展示小时数 × zoom`，因此 1 倍时刚好铺满视口。记录先裁剪到展示范围再布局，原始起止时间不动。展示范围默认整天；打开「只显示工作时段」后由 `workdayStartMinutes` / `workdayEndMinutes` 决定 `timelineRange`，刻度按真实钟点绘制而不是从 0 点起算。
 
 **方向**：`timelineOrientation` 持久化到设置，可在时间轴头部切换。
 
@@ -170,6 +178,9 @@ rect(uStart, uLength, vStart, vThickness) = 横向 ? (x,y,w,h) : (x: vStart, y: 
 - `delta = (currentU − startU) / pixelsPerHour × 3600`，按精度分级取整：< 480 → 30 秒、≥ 480 → 15 秒、≥ 960 → 10 秒、≥ 1440 → 5 秒，按住 Option 精调到 1 秒。
 - 吸附候选是其他条目的真实起止时间（含当前时间）：进入阈值 8px、退出阈值 12px，形成迟滞，避免边界反复吸附 / 脱离。
 - 松手后调用 `updateEntry` 提交，运行中条目的结束边界保持跟随 `now`。
+- 拖拽贴近视口边缘 28pt 时，`TimelineScrollProxy.nudge` 每帧把滚动位置推进 16pt，长距离拖动不用先滚再拖。
+- 悬浮或选中的条目两端常驻 2pt 白色手柄，提示可拖边界；单击选中（`selectedEntryID`）、双击打开编辑；空白拖拽产生 `timelineSelection` 时间范围，头部显示胶囊并提供右键「新建条目」，选中时段直接进入 `newEntryDraftRange`。
+- 条目右键菜单支持「在此拆分」（`splitEntry(_:at:)`，按 5 秒取整）与「合并到下一条」（`mergeEntry(_:)`，同项目且相邻）。
 
 ### 4.5 悬浮卡片
 
@@ -257,6 +268,32 @@ rect(uStart, uLength, vStart, vThickness) = 横向 ? (x,y,w,h) : (x: vStart, y: 
 | 屏幕录制 | 兜底读取窗口标题（`CGWindowName`） | 同上 |
 
 应用使用时长本身不需要任何权限。
+
+### 4.10 统计页
+
+`StatisticsEngine`（`Services/StatisticsEngine.swift`）只依赖 `AccountingSnapshot`，与时间轴共用同一份切片，所以四张卡片、柱状图、环形图、项目树加起来必然等于同一总量：
+
+- `interval(for:now:)`：日 = 今天 0 点起 1 天；周 = 本周一起 7 天；月 = 本月 1 日起整月；年 = 1 月 1 日起整年。
+- `buckets(...)`：按维度（项目 / 应用）与单位（小时 / 天 / 月）把切片拆分到桶里，切片跨界时按重叠秒数分给每个桶；实测各桶之和与切片总量差为 0。
+- `projectShares` 按项目树汇总（父项目含子孙），`appShares` 按 `bundleID` 聚合，`hourly` 是 24 格小时分布。
+- 页面结构：范围 + 维度切换 → 4 张指标卡（总时长 / 日均 / 最活跃时段 / 活跃项目）→ `StackedBarChart`（Canvas 绘制，柱顶直角、底部横轴，悬停显示该桶明细）→ 两个 `DonutChart`（按自身合计归一化，大扇区画真实应用图标，右侧图例显示秒数与占比）→ 项目明细树（可展开层级）→ 耗时归因。
+- 两张环形图用 `DistributionLayout`（自定义 `Layout`）：宽度 ≥ 两列最小宽度 + 间距时左右并排，否则上下排列。用 `Layout` 而不是 `GeometryReader`，因为滚动视图里的 `GeometryReader` 拿不到固有高度。
+
+### 4.11 报告页
+
+- 范围：今日 / 本周 / 本月 / 自定义（`ReportRange`）；内容：时间条目 / 应用使用 / 全部（`ReportContent`）。
+- 表格是 `NSTableView`（`ReportTable` + `ReportNSTableView`）：列可排序（`sortDescriptorsDidChange`）、可配置显隐（列菜单，至少保留两列）、行高 22pt、支持多选与拖拽。
+- 列宽：`columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle`，表格 frame 宽度取 `max(列宽之和, 视口宽度)`，最后一列自动吃掉剩余宽度，右侧不再留空白；列总宽超出视口时出现横向滚动。
+- 右键菜单（`menu(for:)` + `coordinator.contextRow`）：分配到项目（含未分配）、编辑条目、删除记录（`assignUsage(ids:projectID: nil)` 用于应用行）。
+- 拖拽载荷统一带前缀：`chronicle:entry:<id1,id2>` / `chronicle:usage:<id...>`，侧边栏项目行与表格双向可用（`assignDraggedPayload`）。
+- 导出 CSV：当前可见列 + 当前筛选结果，带 UTF-8 BOM，Excel 打开不乱码。
+
+### 4.12 耗时归因
+
+- 表 `attribution` 主键 `(project_id, day)`，`day` 用 `yyyy-MM-dd` 本地日期字符串（`Attribution.dayKey`）。
+- 日视图逐项目填写三项：耗时较高的原因（文本）、是否有预期外的事情（开关 + 描述）、是否有可优化点（开关 + 描述）；输入即保存，通过 `attributionRevision` 触发刷新。
+- 周 / 月 / 年视图按项目汇总：出现天数、预期外天数、可优化天数，并把可优化描述按周聚合成清单。
+- 编辑器只对当天有时长（`snapshot.seconds(projectID:) > 0`）的项目显示。
 
 ## 5. 版本与发布
 

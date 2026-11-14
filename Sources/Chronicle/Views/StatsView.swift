@@ -185,7 +185,7 @@ struct StatsContent: View {
     // MARK: - 两个分布
 
     private func distribution(_ snapshot: StatisticsSnapshot) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        DistributionLayout(spacing: 14) {
             donutCard(
                 title: "应用分布",
                 items: snapshot.applications.map { item in
@@ -722,5 +722,54 @@ struct DonutChart: View {
             cursor += sweep
         }
         return items.last?.id
+    }
+}
+
+/// 两个分布卡片：宽窗口左右并排，窄窗口上下排列。
+/// 用 Layout 而不是 GeometryReader，避免在滚动视图里拿不到固有高度。
+private struct DistributionLayout: Layout {
+    var spacing: CGFloat = 14
+    /// 单列最小宽度，低于两列之和就改为纵向排列。
+    var minColumnWidth: CGFloat = 300
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let width = proposal.width ?? (minColumnWidth * 2 + spacing)
+        guard !subviews.isEmpty else { return CGSize(width: width, height: 0) }
+        if width >= minColumnWidth * 2 + spacing {
+            let columnWidth = (width - spacing) / 2
+            let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)).height }
+            return CGSize(width: width, height: heights.max() ?? 0)
+        }
+        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+        let total = heights.reduce(0, +) + spacing * CGFloat(heights.count - 1)
+        return CGSize(width: width, height: total)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let width = bounds.width
+        if width >= minColumnWidth * 2 + spacing {
+            let columnWidth = (width - spacing) / 2
+            var x = bounds.minX
+            for subview in subviews {
+                let height = subview.sizeThatFits(ProposedViewSize(width: columnWidth, height: nil)).height
+                subview.place(
+                    at: CGPoint(x: x, y: bounds.minY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: columnWidth, height: height)
+                )
+                x += columnWidth + spacing
+            }
+            return
+        }
+        var y = bounds.minY
+        for subview in subviews {
+            let height = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: width, height: height)
+            )
+            y += height + spacing
+        }
     }
 }

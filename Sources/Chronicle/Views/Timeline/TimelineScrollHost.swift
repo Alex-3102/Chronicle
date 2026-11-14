@@ -36,6 +36,26 @@ final class TimelineScrollView: NSScrollView {
     }
 }
 
+/// 拖拽到视口边缘时由画布调用，按需微调滚动位置。
+final class TimelineScrollProxy {
+    weak var scrollView: NSScrollView?
+
+    func nudge(_ delta: CGFloat, horizontal: Bool) {
+        guard let scrollView, let document = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        var origin = clip.bounds.origin
+        if horizontal {
+            let maxValue = max(0, document.frame.width - clip.bounds.width)
+            origin.x = min(max(0, origin.x + delta), maxValue)
+        } else {
+            let maxValue = max(0, document.frame.height - clip.bounds.height)
+            origin.y = min(max(0, origin.y + delta), maxValue)
+        }
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+}
+
 /// 把画布尺寸与滚动偏移放在同一次更新里写的协调器。
 final class TimelineScrollCoordinator {
     weak var scrollView: TimelineScrollView?
@@ -43,6 +63,7 @@ final class TimelineScrollCoordinator {
     var timeInset: CGFloat = 8
     var orientation: TimelineOrientation = .horizontal
     var onOffsetChange: ((CGFloat) -> Void)?
+    var proxy: TimelineScrollProxy?
     private var appliedSize: CGSize = .zero
     private var appliedOrientation: TimelineOrientation = .horizontal
     /// 上一次落在旧方向轴上的偏移，方向切换时用它换算旧视口中心时间。
@@ -53,6 +74,7 @@ final class TimelineScrollCoordinator {
     func attach(_ scrollView: TimelineScrollView) {
         guard self.scrollView !== scrollView else { return }
         self.scrollView = scrollView
+        proxy?.scrollView = scrollView
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -152,12 +174,14 @@ struct TimelineScrollHost: NSViewRepresentable {
     let content: AnyView
     let onMagnify: (CGFloat) -> Void
     let onOffsetChange: (CGFloat) -> Void
+    let proxy: TimelineScrollProxy
 
     func makeCoordinator() -> TimelineScrollCoordinator {
         let coordinator = TimelineScrollCoordinator()
         coordinator.orientation = orientation
         coordinator.timeInset = timeInset
         coordinator.onOffsetChange = onOffsetChange
+        coordinator.proxy = proxy
         return coordinator
     }
 

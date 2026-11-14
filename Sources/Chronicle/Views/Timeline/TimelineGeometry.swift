@@ -36,6 +36,8 @@ struct TimelineGeometry {
     let pixelsPerHour: CGFloat
     /// 时间方向两端留白（放得下首尾刻度）
     let timeInset: CGFloat
+    /// 主轴可见长度（不含滚出视口的部分），拖拽贴边滚动用。
+    let viewportLength: CGFloat
 
     var rangeSeconds: TimeInterval { max(1, rangeEnd.timeIntervalSince(rangeStart)) }
     var rangeHours: CGFloat { CGFloat(rangeSeconds / 3600) }

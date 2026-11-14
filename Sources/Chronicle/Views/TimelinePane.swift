@@ -297,6 +297,7 @@ struct DayTimelineView: View {
     @State private var hoverTime: Date?
     @State private var lastHoverContentPoint: CGPoint?
     @State private var drag: EntryDragState?
+    @State private var scrollProxy = TimelineScrollProxy()
 
     private var orientation: TimelineOrientation { app.timelineOrientation }
 
@@ -323,7 +324,8 @@ struct DayTimelineView: View {
                     timeInset: timeInset,
                     rangeHours: CGFloat(range.duration / 3600)
                 ),
-                timeInset: timeInset
+                timeInset: timeInset,
+                viewportLength: metrics.axisViewportLength
             )
             let layout = TimelineTrackLayout(
                 crossStart: metrics.trackCrossStart,
@@ -357,7 +359,8 @@ struct DayTimelineView: View {
                     onOffsetChange: { value in
                         scrollOffset = value
                         refreshHover(geometry: geometry, layout: layout)
-                    }
+                    },
+                    proxy: scrollProxy
                 )
                 .frame(width: metrics.scrollFrame.width, height: metrics.scrollFrame.height)
                 .offset(x: metrics.scrollFrame.minX, y: metrics.scrollFrame.minY)
@@ -405,7 +408,8 @@ struct DayTimelineView: View {
                         orientation: orientation,
                         size: rect.size,
                         isDragging: drag?.entry?.id == block.id,
-                        isSelected: app.selectedEntryID == block.id
+                        isSelected: app.selectedEntryID == block.id,
+                        showHandles: hover?.entry?.id == block.id || app.selectedEntryID == block.id
                     )
                     .frame(width: rect.width, height: rect.height)
                     // 时间很短时卡片只有几 pt，必须裁掉溢出的内容，否则会盖住相邻条目
@@ -868,6 +872,19 @@ struct DayTimelineView: View {
 
     // MARK: - 拖拽
 
+    /// 拖拽贴近视口边缘时自动滚动。
+    private func autoScrollIfNeeded(at point: CGPoint, geometry: TimelineGeometry) {
+        let axis = geometry.pointToAxis(point)
+        let start = scrollOffset
+        let end = scrollOffset + geometry.viewportLength
+        let margin: CGFloat = 28
+        if axis < start + margin {
+            scrollProxy.nudge(-16, horizontal: orientation.isHorizontal)
+        } else if axis > end - margin {
+            scrollProxy.nudge(16, horizontal: orientation.isHorizontal)
+        }
+    }
+
     private func dragChanged(
         _ value: DragGesture.Value,
         geometry: TimelineGeometry,
@@ -886,6 +903,7 @@ struct DayTimelineView: View {
             hoverTime = nil
         }
         guard var state = drag else { return }
+        autoScrollIfNeeded(at: value.location, geometry: geometry)
 
         let rawDelta = TimeInterval((currentU - startU) / geometry.pixelsPerHour * 3600)
         if abs(currentU - startU) > 1 { state.moved = true }
@@ -1061,10 +1079,22 @@ struct TimelineEntryCard: View {
     let size: CGSize
     let isDragging: Bool
     let isSelected: Bool
+    let showHandles: Bool
 
     /// 时间方向放不下标题时只留色块，避免文字溢出到相邻条目上。
     private var showsTitle: Bool {
         orientation.isHorizontal ? size.width >= 44 && size.height >= 12 : size.height >= 20
+    }
+
+    /// 悬浮或选中时显示两端手柄，提示可以拖动边界调整起止。
+    private var resizeHandle: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(Color.white.opacity(0.8))
+            .frame(
+                width: orientation.isHorizontal ? 2 : nil,
+                height: orientation.isHorizontal ? nil : 2
+            )
+            .padding(orientation.isHorizontal ? .vertical : .horizontal, 3)
     }
 
     var body: some View {
@@ -1105,6 +1135,12 @@ struct TimelineEntryCard: View {
         )
         .opacity(block.dimmed && !isSelected ? 0.55 : 1)
         .shadow(color: isDragging ? Color.black.opacity(0.25) : .clear, radius: 6, y: 2)
+        .overlay(alignment: orientation.isHorizontal ? .leading : .top) {
+            if showHandles { resizeHandle }
+        }
+        .overlay(alignment: orientation.isHorizontal ? .trailing : .bottom) {
+            if showHandles { resizeHandle }
+        }
         .help("\(block.entry.title) · \(Fmt.timeOfDay(block.entry.start))–\(Fmt.timeOfDay(block.entry.end))")
     }
 }
