@@ -601,6 +601,25 @@ final class AppState: ObservableObject {
         reload()
     }
 
+    /// 报告页拖到侧边栏项目时使用：识别 chronicle:entry:/usage: 前缀。
+    @discardableResult
+    func assignDraggedPayload(_ text: String, to projectID: String?) -> Bool {
+        guard text.hasPrefix("chronicle:") else { return false }
+        let parts = text.split(separator: ":", maxSplits: 2).map(String.init)
+        guard parts.count == 3 else { return false }
+        let ids = parts[2].split(separator: ",").map(String.init)
+        guard !ids.isEmpty else { return false }
+        switch parts[1] {
+        case "entry":
+            assignRecords(entryIDs: ids, to: projectID)
+        case "usage":
+            assignRecords(entryIDs: [], activityIDs: ids, to: projectID)
+        default:
+            return false
+        }
+        return true
+    }
+
     // MARK: - 当前筛选范围
 
     /// 当前选中项目及其所有子孙项目的 id。
@@ -972,6 +991,12 @@ final class AppState: ObservableObject {
             source: source
         )
         store.addEntry(entry)
+        reload()
+    }
+
+    func deleteEntry(id: String) {
+        store.deleteEntry(id: id)
+        if selectedEntryID == id { selectedEntryID = nil }
         reload()
     }
 

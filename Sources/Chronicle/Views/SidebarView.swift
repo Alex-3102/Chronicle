@@ -452,6 +452,8 @@ struct ProjectRow: View {
             rowHeight: rowHeight,
             onZone: { dropZone = $0 },
             onDrop: { id, zone in
+                // 报告页拖来的条目 / 应用记录：直接归到该项目。
+                if app.assignDraggedPayload(id, to: project.id) { return }
                 guard id != project.id else { return }
                 switch zone {
                 case .before:
