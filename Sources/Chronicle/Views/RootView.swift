@@ -28,7 +28,7 @@ struct RootView: View {
         .background(Theme.window)
         .frame(minWidth: 1080, minHeight: 660)
         .sheet(isPresented: $app.newEntryPresented) {
-            NewEntrySheet().environmentObject(app)
+            NewEntrySheet(presetRange: app.newEntryDraftRange).environmentObject(app)
         }
         .sheet(isPresented: $app.newProjectPresented) {
             NewProjectSheet(presetParentID: app.newProjectParentID).environmentObject(app)

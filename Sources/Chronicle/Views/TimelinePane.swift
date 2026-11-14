@@ -138,6 +138,30 @@ struct TimelinePane: View {
             }
 
             orientationButton
+            if let selection = app.timelineSelection {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Theme.blue)
+                        .frame(width: 4, height: 4)
+                    Text("\(Fmt.timeOfDay(selection.start))–\(Fmt.timeOfDay(selection.end))")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                        .foregroundColor(Theme.text)
+                        .lineLimit(1)
+                    Button {
+                        app.timelineSelection = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(Theme.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(Capsule().fill(Theme.blue.opacity(0.16)))
+            }
+
             zoomControls
 
             if app.isToday {
@@ -326,6 +350,8 @@ struct DayTimelineView: View {
                             .environmentObject(app)
                     ),
                     onMagnify: { magnification in
+                        hover = nil
+                        hoverTime = nil
                         app.setTimelineZoom(app.timelineZoom * (1 + magnification))
                     },
                     onOffsetChange: { value in
@@ -378,7 +404,8 @@ struct DayTimelineView: View {
                         block: block,
                         orientation: orientation,
                         size: rect.size,
-                        isDragging: drag?.entry?.id == block.id
+                        isDragging: drag?.entry?.id == block.id,
+                        isSelected: app.selectedEntryID == block.id
                     )
                     .frame(width: rect.width, height: rect.height)
                     // 时间很短时卡片只有几 pt，必须裁掉溢出的内容，否则会盖住相邻条目
@@ -405,6 +432,16 @@ struct DayTimelineView: View {
                 .onChanged { value in dragChanged(value, geometry: geometry, layout: layout, blocks: bands.entries, lanes: lanes) }
                 .onEnded { _ in dragEnded() }
         )
+        .simultaneousGesture(
+            SpatialTapGesture(count: 1).onEnded { value in
+                handleTap(at: value.location, geometry: geometry, layout: layout, bands: bands, lanes: lanes)
+            }
+        )
+        .simultaneousGesture(
+            SpatialTapGesture(count: 2).onEnded { value in
+                handleDoubleTap(at: value.location, geometry: geometry, layout: layout, bands: bands, lanes: lanes)
+            }
+        )
         .onContinuousHover { phase in
             switch phase {
             case .active(let point):
@@ -418,6 +455,19 @@ struct DayTimelineView: View {
         }
         .contextMenu {
             if let entry = hover?.entry {
+                Button("编辑…") { app.editingEntry = entry }
+                Button("在此拆分") {
+                    if let time = hoverTime { app.splitEntry(entry, at: time) }
+                }
+                Button("与相邻条目合并") { app.mergeEntry(entry) }
+                Menu("分配到项目") {
+                    Button("未分配") { app.assign(entryIDs: [entry.id], to: nil) }
+                    Divider()
+                    ForEach(app.projects) { project in
+                        Button(project.name) { app.assign(entryIDs: [entry.id], to: project.id) }
+                    }
+                }
+                Divider()
                 Button("删除记录", role: .destructive) {
                     app.deleteEntry(entry)
                 }
@@ -467,6 +517,34 @@ struct DayTimelineView: View {
                 ) {
                     context.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(Theme.blue.opacity(0.16)))
                     context.stroke(Path(roundedRect: rect, cornerRadius: 4), with: .color(Theme.blue.opacity(0.7)), lineWidth: 1)
+                }
+            } else if let selection = app.timelineSelection,
+                      let rect = geometry.rect(
+                        start: selection.start,
+                        end: selection.end,
+                        vStart: layout.crossStart,
+                        vThickness: layout.crossLength
+                      ) {
+                // 已确定的框选范围：贯穿三轨的浅色带，方便核对列表过滤结果。
+                context.fill(Path(rect), with: .color(Theme.blue.opacity(0.10)))
+                if orientation.isHorizontal {
+                    context.fill(
+                        Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: 1)),
+                        with: .color(Theme.blue.opacity(0.75))
+                    )
+                    context.fill(
+                        Path(CGRect(x: rect.minX, y: rect.maxY - 1, width: rect.width, height: 1)),
+                        with: .color(Theme.blue.opacity(0.75))
+                    )
+                } else {
+                    context.fill(
+                        Path(CGRect(x: rect.minX, y: rect.minY, width: 1, height: rect.height)),
+                        with: .color(Theme.blue.opacity(0.75))
+                    )
+                    context.fill(
+                        Path(CGRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height)),
+                        with: .color(Theme.blue.opacity(0.75))
+                    )
                 }
             }
         }
@@ -692,6 +770,56 @@ struct DayTimelineView: View {
         )
     }
 
+    // MARK: - 点击
+
+    private func hitEntry(
+        at point: CGPoint,
+        geometry: TimelineGeometry,
+        lanes: EntryLaneMetrics,
+        bands: Bands
+    ) -> TimelineEntryBlock? {
+        for block in bands.entries {
+            guard let rect = geometry.rect(
+                start: block.entry.start,
+                end: block.entry.end,
+                vStart: lanes.origin(block.lane, horizontal: orientation.isHorizontal),
+                vThickness: lanes.thickness(horizontal: orientation.isHorizontal)
+            ) else { continue }
+            if rect.insetBy(dx: -2, dy: -2).contains(point) { return block }
+        }
+        return nil
+    }
+
+    private func handleTap(
+        at point: CGPoint,
+        geometry: TimelineGeometry,
+        layout: TimelineTrackLayout,
+        bands: Bands,
+        lanes: EntryLaneMetrics
+    ) {
+        app.selectedEntryID = hitEntry(at: point, geometry: geometry, lanes: lanes, bands: bands)?.id
+    }
+
+    private func handleDoubleTap(
+        at point: CGPoint,
+        geometry: TimelineGeometry,
+        layout: TimelineTrackLayout,
+        bands: Bands,
+        lanes: EntryLaneMetrics
+    ) {
+        if let block = hitEntry(at: point, geometry: geometry, lanes: lanes, bands: bands) {
+            app.selectedEntryID = block.id
+            app.editingEntry = block.entry
+            return
+        }
+        guard geometry.pointToCrossAxis(point) >= layout.entryOrigin else { return }
+        let time = geometry.axisToTime(geometry.pointToAxis(point))
+        let length: TimeInterval = 30 * 60
+        let start = min(max(time, geometry.rangeStart), geometry.rangeEnd.addingTimeInterval(-length))
+        let end = min(start.addingTimeInterval(length), geometry.rangeEnd)
+        app.presentNewEntry(range: DateInterval(start: start, end: end))
+    }
+
     // MARK: - 悬浮
 
     private func updateHover(
@@ -711,6 +839,8 @@ struct DayTimelineView: View {
             .filter { $0.start <= time && time < $0.end }
             .max { $0.start < $1.start }
         let span = bands.projects.last { $0.start <= time && time < $0.end }
+        // 聚合块的判断按 hover 时刻所在的色块读取，避免「原记录被包含」的误判。
+        let segment = bands.apps.last { $0.start <= time && time < $0.end }
 
         let pane = panePoint(from: point, geometry: geometry)
         hover = HoverCardData(
@@ -719,9 +849,7 @@ struct DayTimelineView: View {
             app: record,
             entry: entry,
             projectID: span?.projectID,
-            appIsBucketed: record.map { record in
-                bands.apps.contains { $0.isBucketed && $0.start <= record.start && record.end <= $0.end }
-            } ?? false
+            appIsBucketed: segment?.isBucketed ?? false
         )
     }
 
@@ -753,6 +881,9 @@ struct DayTimelineView: View {
         if drag == nil {
             drag = beginDrag(at: value.startLocation, geometry: geometry, layout: layout, blocks: blocks, lanes: lanes)
             if drag == nil { return }
+            // 拖拽期间关闭悬浮卡片，避免跟着指针抖动。
+            hover = nil
+            hoverTime = nil
         }
         guard var state = drag else { return }
 
@@ -841,9 +972,19 @@ struct DayTimelineView: View {
 
     private func dragEnded() {
         defer { drag = nil }
-        guard let state = drag, state.moved else { return }
-        guard state.mode != .select, let entry = state.entry else { return }
-        guard state.end > state.start else { return }
+        guard let state = drag, state.moved else {
+            // 没有真正拖动就当作点击，交给 tap 手势处理。
+            return
+        }
+        if state.mode == .select {
+            // 空白处拖出的范围写入时间筛选，活动列表随之过滤。
+            if state.end.timeIntervalSince(state.start) >= 60 {
+                app.timelineSelection = DateInterval(start: state.start, end: state.end)
+                app.selectedEntryID = nil
+            }
+            return
+        }
+        guard let entry = state.entry, state.end > state.start else { return }
         app.updateEntry(
             entry,
             projectID: entry.projectID,
@@ -919,6 +1060,7 @@ struct TimelineEntryCard: View {
     let orientation: TimelineOrientation
     let size: CGSize
     let isDragging: Bool
+    let isSelected: Bool
 
     /// 时间方向放不下标题时只留色块，避免文字溢出到相邻条目上。
     private var showsTitle: Bool {
@@ -956,9 +1098,12 @@ struct TimelineEntryCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(
             Rectangle()
-                .strokeBorder(block.color.opacity(block.dimmed ? 0.35 : 0.8), lineWidth: 1.2)
+                .strokeBorder(
+                    isSelected ? Theme.text.opacity(0.9) : block.color.opacity(block.dimmed ? 0.35 : 0.8),
+                    lineWidth: isSelected ? 2 : 1.2
+                )
         )
-        .opacity(block.dimmed ? 0.55 : 1)
+        .opacity(block.dimmed && !isSelected ? 0.55 : 1)
         .shadow(color: isDragging ? Color.black.opacity(0.25) : .clear, radius: 6, y: 2)
         .help("\(block.entry.title) · \(Fmt.timeOfDay(block.entry.start))–\(Fmt.timeOfDay(block.entry.end))")
     }
@@ -995,6 +1140,18 @@ struct HoverCardView: View {
 
                 row("标　题") {
                     Text(record.windowTitle ?? "—")
+                }
+
+                if let url = record.url, !url.isEmpty {
+                    row("链　接") {
+                        Text(url)
+                    }
+                }
+
+                if let filePath = record.filePath, !filePath.isEmpty {
+                    row("文　件") {
+                        Text(filePath)
+                    }
                 }
 
                 if hover.appIsBucketed {

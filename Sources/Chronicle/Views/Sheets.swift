@@ -324,8 +324,15 @@ struct NewEntrySheet: View {
     @State private var end = Date()
     @FocusState private var titleFocused: Bool
 
-    init(editing: TimeEntry? = nil) {
+    init(editing: TimeEntry? = nil, presetRange: DateInterval? = nil) {
         self.editing = editing
+        if let presetRange {
+            _start = State(initialValue: presetRange.start)
+            _end = State(initialValue: presetRange.end)
+        } else if let editing {
+            _start = State(initialValue: editing.start)
+            _end = State(initialValue: editing.end)
+        }
     }
 
     var body: some View {
@@ -439,6 +446,9 @@ struct NewEntrySheet: View {
                 projectID = app.selectedProjectID
             }
             titleFocused = true
+        }
+        .onDisappear {
+            app.newEntryDraftRange = nil
         }
     }
 

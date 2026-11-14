@@ -93,6 +93,12 @@ final class AppState: ObservableObject {
 
     @Published var newEntryPresented = false
     @Published var editingEntry: TimeEntry?
+    /// 双击空白处新建条目时预填的时间范围。
+    @Published var newEntryDraftRange: DateInterval?
+    /// 时间轴上当前选中的条目。
+    @Published var selectedEntryID: String?
+    /// 空白处拖拽出的时间筛选范围。
+    @Published var timelineSelection: DateInterval?
     @Published var newProjectPresented = false
     @Published var newProjectParentID: String?
     @Published var editingProject: Project?
@@ -399,6 +405,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 所有活动列表使用的条目：额外按时间轴框选范围过滤。
+    var activityListEntries: [TimeEntry] {
+        guard let selection = timelineSelection else { return timelineEntries }
+        return timelineEntries.filter { $0.end > selection.start && $0.start < selection.end }
+    }
+
+    /// 所有活动列表使用的应用记录：额外按时间轴框选范围过滤。
+    var activityListUsage: [AppUsageRecord] {
+        guard let selection = timelineSelection else { return dayUsageRecords }
+        return dayUsageRecords.filter { $0.end > selection.start && $0.start < selection.end }
+    }
+
     /// 该条目是否落在当前所选项目范围内；用于时间轴上弱化其他项目。
     func isInSelection(_ entry: TimeEntry) -> Bool {
         guard !unassignedOnly else { return entry.projectID == nil }
@@ -522,7 +540,7 @@ final class AppState: ObservableObject {
     }
 
     /// 把条目和应用记录一起分配到项目，供拖拽与右键菜单复用。
-    func assign(entryIDs: [String], activityIDs: [String] = [], to projectID: String?) {
+    func assignRecords(entryIDs: [String], activityIDs: [String] = [], to projectID: String?) {
         for id in entryIDs {
             guard var entry = entries.first(where: { $0.id == id }) else { continue }
             entry.projectID = projectID
@@ -908,6 +926,42 @@ final class AppState: ObservableObject {
 
     func deleteEntry(_ entry: TimeEntry) {
         store.deleteEntry(id: entry.id)
+        if selectedEntryID == entry.id { selectedEntryID = nil }
+        reload()
+    }
+
+    /// 双击空白处新建：带上时间范围预填。
+    func presentNewEntry(range: DateInterval?) {
+        newEntryDraftRange = range
+        newEntryPresented = true
+    }
+
+    /// 在指定时刻把一个条目拆成两条。
+    func splitEntry(_ entry: TimeEntry, at date: Date) {
+        guard date > entry.start.addingTimeInterval(30), date < entry.end.addingTimeInterval(-30) else { return }
+        var first = entry
+        first.end = date
+        var second = entry
+        second.id = UUID().uuidString
+        second.start = date
+        store.addEntry(first)
+        store.addEntry(second)
+        reload()
+    }
+
+    /// 与首尾相接（≤60 秒）、同项目同标题的相邻条目合并。
+    func mergeEntry(_ entry: TimeEntry) {
+        let neighbor = entries.first { other in
+            guard other.id != entry.id, other.projectID == entry.projectID, other.title == entry.title else { return false }
+            return abs(other.end.timeIntervalSince(entry.start)) <= 60
+                || abs(entry.end.timeIntervalSince(other.start)) <= 60
+        }
+        guard let neighbor else { return }
+        var merged = entry
+        merged.start = min(entry.start, neighbor.start)
+        merged.end = max(entry.end, neighbor.end)
+        store.deleteEntry(id: neighbor.id)
+        store.addEntry(merged)
         reload()
     }
 

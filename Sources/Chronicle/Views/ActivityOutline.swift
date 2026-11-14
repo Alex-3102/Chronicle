@@ -453,7 +453,7 @@ struct ActivityOutlineSection: View {
                     .monospacedDigit()
                     .foregroundColor(Theme.secondary)
                 Spacer(minLength: 6)
-                Text("条目 \(app.timelineEntries.count) · 应用 \(appCount)")
+                Text("条目 \(app.activityListEntries.count) · 应用 \(appCount)")
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.tertiary)
             }
@@ -461,8 +461,8 @@ struct ActivityOutlineSection: View {
             .frame(height: 30)
 
             ActivityOutlineView(
-                entries: app.timelineEntries,
-                usage: app.dayUsageRecords,
+                entries: app.activityListEntries,
+                usage: app.activityListUsage,
                 projects: app.projects,
                 dayInterval: app.dayInterval,
                 isEntryInSelection: { app.isInSelection($0) },
@@ -476,7 +476,7 @@ struct ActivityOutlineSection: View {
     }
 
     private var appCount: Int {
-        Set(app.dayUsageRecords.map { $0.bundleID.isEmpty ? $0.appName : $0.bundleID }).count
+        Set(app.activityListUsage.map { $0.bundleID.isEmpty ? $0.appName : $0.bundleID }).count
     }
 }
 
