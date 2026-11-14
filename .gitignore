@@ -1,0 +1,15 @@
+.DS_Store
+
+# SwiftPM 与 Xcode 产物
+.build/
+build/
+dist/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# 本地数据与日志
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
