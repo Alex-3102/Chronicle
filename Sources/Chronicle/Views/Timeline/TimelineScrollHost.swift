@@ -45,6 +45,9 @@ final class TimelineScrollCoordinator {
     var onOffsetChange: ((CGFloat) -> Void)?
     private var appliedSize: CGSize = .zero
     private var appliedOrientation: TimelineOrientation = .horizontal
+    /// 上一次落在旧方向轴上的偏移，方向切换时用它换算旧视口中心时间。
+    private var lastOffset: CGFloat = 0
+    private var lastScopeID: String = ""
     private var observer: NSObjectProtocol?
 
     func attach(_ scrollView: TimelineScrollView) {
@@ -60,7 +63,9 @@ final class TimelineScrollCoordinator {
             queue: .main
         ) { [weak self] _ in
             guard let self, let scrollView = self.scrollView else { return }
-            self.onOffsetChange?(self.currentOffset(scrollView))
+            let offset = self.currentOffset(scrollView)
+            self.lastOffset = offset
+            self.onOffsetChange?(offset)
         }
     }
 
@@ -70,31 +75,52 @@ final class TimelineScrollCoordinator {
             : scrollView.contentView.bounds.origin.y
     }
 
-    /// 内容尺寸或方向变化时调用：先算锚点时间，再同批写画布尺寸和偏移。
-    func apply(contentSize: CGSize, orientation: TimelineOrientation, hostingView: NSView) {
+    /// 内容尺寸、方向或展示范围变化时调用：先算锚点时间，再同批写画布尺寸和偏移。
+    func apply(
+        contentSize: CGSize,
+        orientation: TimelineOrientation,
+        hostingView: NSView,
+        rangeStart: Date,
+        pixelsPerHour: CGFloat,
+        focusTime: Date?,
+        scopeID: String
+    ) {
         guard let scrollView else { return }
         let horizontal = orientation.isHorizontal
         scrollView.scrollsHorizontally = horizontal
 
         let clip = scrollView.contentView
         let visible = horizontal ? clip.bounds.width : clip.bounds.height
-        let oldOffset = horizontal ? clip.bounds.origin.x : clip.bounds.origin.y
+        let rawOffset = horizontal ? clip.bounds.origin.x : clip.bounds.origin.y
         let oldAxisLength = appliedOrientation.isHorizontal ? appliedSize.width : appliedSize.height
         let newAxisLength = horizontal ? contentSize.width : contentSize.height
         let sizeChanged = abs(contentSize.width - appliedSize.width) > 0.01
             || abs(contentSize.height - appliedSize.height) > 0.01
         let orientationChanged = appliedOrientation != orientation
-        guard (sizeChanged || orientationChanged), visible > 0 else { return }
+        let scopeChanged = scopeID != lastScopeID
+        guard sizeChanged || orientationChanged || scopeChanged, visible > 0 else { return }
 
         // 锚点：捏合时用双指中点，按钮 / 窗口变化时用视口中心。
-        let anchorProbe = scrollView.anchorPointer
-        let pointer = min(max(anchorProbe ?? visible / 2, 0), visible)
+        var pointer = min(max(scrollView.anchorPointer ?? visible / 2, 0), visible)
+        var oldOffset = rawOffset
+        if orientationChanged {
+            // 旧偏移在另一根轴上，直接读会跳位；改用旧视口中心对应的偏移。
+            pointer = visible / 2
+            oldOffset = lastOffset
+        }
+
         var target = oldOffset
-        let oldSpan = oldAxisLength - timeInset * 2
-        let newSpan = newAxisLength - timeInset * 2
-        if oldSpan > 1, newSpan > 1 {
-            let fraction = (oldOffset + pointer - timeInset) / oldSpan
-            target = timeInset + fraction * newSpan - pointer
+        if scopeChanged, let focusTime {
+            // 切换日期 / 筛选范围：把焦点时间放到视口中心。
+            let axis = timeInset + CGFloat(focusTime.timeIntervalSince(rangeStart) / 3600) * pixelsPerHour
+            target = axis - visible / 2
+        } else {
+            let oldSpan = oldAxisLength - timeInset * 2
+            let newSpan = newAxisLength - timeInset * 2
+            if oldSpan > 1, newSpan > 1 {
+                let fraction = (oldOffset + pointer - timeInset) / oldSpan
+                target = timeInset + fraction * newSpan - pointer
+            }
         }
 
         // 画布尺寸与偏移在同一批里写，中间不会出现被旧尺寸裁过的偏移。
@@ -103,8 +129,10 @@ final class TimelineScrollCoordinator {
         appliedOrientation = orientation
         self.orientation = orientation
         scrollView.anchorPointer = nil
+        lastScopeID = scopeID
 
         let clamped = min(max(0, target), max(0, newAxisLength - visible))
+        lastOffset = clamped
         clip.scroll(to: horizontal ? NSPoint(x: clamped, y: 0) : NSPoint(x: 0, y: clamped))
         scrollView.reflectScrolledClipView(clip)
         onOffsetChange?(clamped)
@@ -115,6 +143,12 @@ struct TimelineScrollHost: NSViewRepresentable {
     let contentSize: CGSize
     let orientation: TimelineOrientation
     let timeInset: CGFloat
+    let rangeStart: Date
+    let pixelsPerHour: CGFloat
+    /// 进入某个日期 / 筛选范围时希望居中的时间。
+    let focusTime: Date?
+    /// 日期 + 筛选的标识，变化时执行新的初始定位。
+    let scopeID: String
     let content: AnyView
     let onMagnify: (CGFloat) -> Void
     let onOffsetChange: (CGFloat) -> Void
@@ -152,6 +186,14 @@ struct TimelineScrollHost: NSViewRepresentable {
         context.coordinator.onOffsetChange = onOffsetChange
         guard let hosting = nsView.documentView as? NSHostingView<AnyView> else { return }
         hosting.rootView = content
-        context.coordinator.apply(contentSize: contentSize, orientation: orientation, hostingView: hosting)
+        context.coordinator.apply(
+            contentSize: contentSize,
+            orientation: orientation,
+            hostingView: hosting,
+            rangeStart: rangeStart,
+            pixelsPerHour: pixelsPerHour,
+            focusTime: focusTime,
+            scopeID: scopeID
+        )
     }
 }

@@ -289,11 +289,16 @@ struct DayTimelineView: View {
                 rulerThickness: rulerThickness,
                 labelThickness: orientation.isHorizontal ? 46 : 16
             )
+            let range = app.timelineRange
             let geometry = TimelineGeometry(
                 orientation: orientation,
-                rangeStart: app.dayInterval.start,
-                rangeEnd: app.dayInterval.end,
-                pixelsPerHour: metrics.pixelsPerHour(zoom: app.timelineZoom, timeInset: timeInset),
+                rangeStart: range.start,
+                rangeEnd: range.end,
+                pixelsPerHour: metrics.pixelsPerHour(
+                    zoom: app.timelineZoom,
+                    timeInset: timeInset,
+                    rangeHours: CGFloat(range.duration / 3600)
+                ),
                 timeInset: timeInset
             )
             let layout = TimelineTrackLayout(
@@ -312,6 +317,10 @@ struct DayTimelineView: View {
                     ),
                     orientation: orientation,
                     timeInset: timeInset,
+                    rangeStart: range.start,
+                    pixelsPerHour: geometry.pixelsPerHour,
+                    focusTime: initialFocusTime(in: range),
+                    scopeID: scopeID(range: range),
                     content: AnyView(
                         board(geometry: geometry, layout: layout, bands: bands)
                             .environmentObject(app)
@@ -331,6 +340,28 @@ struct DayTimelineView: View {
     }
 
     // MARK: - 画布
+
+    /// 进入某天时的初始定位：今天看当前时间，历史日期看第一条记录附近。
+    private func initialFocusTime(in range: DateInterval) -> Date {
+        if app.isToday {
+            return min(max(app.now, range.start), range.end)
+        }
+        if let first = app.accounting.slices.first?.start {
+            return first.addingTimeInterval(30 * 60)
+        }
+        return range.start.addingTimeInterval(range.duration / 2)
+    }
+
+    /// 日期 + 筛选范围的标识，变化时重新做初始定位。
+    private func scopeID(range: DateInterval) -> String {
+        [
+            String(range.start.timeIntervalSince1970),
+            String(range.end.timeIntervalSince1970),
+            app.selectedProjectID ?? "-",
+            app.unassignedOnly ? "unassigned" : "all",
+            app.globalSearch
+        ].joined(separator: "|")
+    }
 
     private func board(geometry: TimelineGeometry, layout: TimelineTrackLayout, bands: Bands) -> some View {
         let contentSize = CGSize(
@@ -462,12 +493,16 @@ struct DayTimelineView: View {
         let step = tickStep(pixelsPerHour: geometry.pixelsPerHour)
         let rulerStart = orientation.isHorizontal ? 0 : layout.crossLength
         let rulerCenter = rulerStart + rulerThickness / 2
+        let calendar = Calendar.current
 
-        var hour = 0.0
-        while hour <= 24.0001 {
-            let date = geometry.rangeStart.addingTimeInterval(hour * 3600)
+        // 刻度从展示范围起点开始，按真实时钟时刻标注（范围可能从 08:00 起，不再是 0–24）。
+        var offset = 0.0
+        while offset <= Double(geometry.rangeHours) + 0.0001 {
+            let date = geometry.rangeStart.addingTimeInterval(offset * 3600)
+            let hourOfDay = Double(calendar.component(.hour, from: date))
+                + Double(calendar.component(.minute, from: date)) / 60
             let u = geometry.timeToAxis(date)
-            let major = abs((hour / step).rounded() - hour / step) < 0.001
+            let major = abs((hourOfDay / step).rounded() - hourOfDay / step) < 0.001
 
             // 网格线贯穿三轨
             let grid = geometry.line(
@@ -483,7 +518,7 @@ struct DayTimelineView: View {
             context.fill(Path(tick), with: .color(Theme.divider.opacity(0.55)))
 
             if major {
-                let text = Text(label(forHour: hour))
+                let text = Text(label(forHour: hourOfDay))
                     .font(.system(size: 9))
                     .foregroundColor(Theme.tertiary)
                 let position = orientation.isHorizontal
@@ -491,7 +526,7 @@ struct DayTimelineView: View {
                     : CGPoint(x: rulerCenter, y: u)
                 context.draw(text, at: position, anchor: .center)
             }
-            hour += 0.5
+            offset += 0.5
         }
     }
 

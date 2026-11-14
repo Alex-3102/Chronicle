@@ -190,12 +190,12 @@ struct TimelineMetrics {
         orientation.isHorizontal ? scrollFrame.width : scrollFrame.height
     }
 
-    /// 1 倍缩放时每小时像素：扣掉两端留白后正好铺满视口
-    func basePixelsPerHour(timeInset: CGFloat) -> CGFloat {
-        max(axisViewportLength - timeInset * 2, 60) / 24
+    /// 1 倍缩放时每小时像素：扣掉两端留白后正好铺满视口（按真实展示范围，而不是固定 24 小时）
+    func basePixelsPerHour(timeInset: CGFloat, rangeHours: CGFloat) -> CGFloat {
+        max(axisViewportLength - timeInset * 2, 60) / max(1, rangeHours)
     }
 
-    func pixelsPerHour(zoom: Double, timeInset: CGFloat) -> CGFloat {
-        basePixelsPerHour(timeInset: timeInset) * CGFloat(min(max(zoom, 1), 24))
+    func pixelsPerHour(zoom: Double, timeInset: CGFloat, rangeHours: CGFloat) -> CGFloat {
+        basePixelsPerHour(timeInset: timeInset, rangeHours: rangeHours) * CGFloat(min(max(zoom, 1), 24))
     }
 }

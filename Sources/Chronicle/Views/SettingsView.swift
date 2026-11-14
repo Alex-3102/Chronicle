@@ -61,6 +61,40 @@ struct SettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { app.timelineZoomToWorkHours },
+                    set: { app.setTimelineZoomToWorkHours($0) }
+                )) {
+                    Text("时间轴只显示工作时段")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                HStack(spacing: 8) {
+                    Text("工作时段")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.secondary)
+                    Spacer()
+                    Text(timeText(app.workdayStartMinutes))
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundColor(Theme.text)
+                    Text("–")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.tertiary)
+                    Text(timeText(app.workdayEndMinutes))
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundColor(Theme.text)
+                }
+                Text("有记录超出这个范围时，时间轴会自动向外扩展到整点。")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.tertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("辅助功能权限")
                         .font(.system(size: 11, weight: .medium))
@@ -91,7 +125,11 @@ struct SettingsView: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 430, height: 300)
+        .frame(width: 430, height: 380)
         .background(Theme.panel)
+    }
+
+    private func timeText(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 }

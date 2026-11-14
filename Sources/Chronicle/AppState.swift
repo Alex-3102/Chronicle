@@ -82,6 +82,10 @@ final class AppState: ObservableObject {
     @Published var timelineMaxZoom: Double = 8
     @Published var timelineZoom: Double = 1
     @Published var timelineOrientation: TimelineOrientation = .horizontal
+    /// 工作时段（分钟数），时间轴默认只展示这一段。
+    @Published var workdayStartMinutes = 8 * 60
+    @Published var workdayEndMinutes = 18 * 60
+    @Published var timelineZoomToWorkHours = true
 
     /// 辅助功能权限：只用于读取前台窗口标题，未授权时其余记录照常。
     @Published var accessibilityTrusted = AXIsProcessTrusted()
@@ -127,6 +131,15 @@ final class AppState: ObservableObject {
         }
         if let raw = store.setting("timelineOrientation"), let value = TimelineOrientation(rawValue: raw) {
             timelineOrientation = value
+        }
+        if let raw = store.setting("workdayStartMinutes"), let value = Int(raw) {
+            workdayStartMinutes = min(23 * 60, max(0, value))
+        }
+        if let raw = store.setting("workdayEndMinutes"), let value = Int(raw) {
+            workdayEndMinutes = min(24 * 60, max(60, value))
+        }
+        if let raw = store.setting("timelineZoomToWorkHours") {
+            timelineZoomToWorkHours = raw == "1"
         }
         refreshProjects()
         reload()
@@ -282,6 +295,39 @@ final class AppState: ObservableObject {
     var dayInterval: DateInterval {
         let start = Calendar.current.startOfDay(for: selectedDay)
         return DateInterval(start: start, duration: 24 * 60 * 60)
+    }
+
+    /// 时间轴实际展示范围：默认只显示工作时段，有记录超出时向外扩展到整点。
+    var timelineRange: DateInterval {
+        let day = dayInterval
+        guard timelineZoomToWorkHours else { return day }
+        let calendar = Calendar.current
+        var start = calendar.date(byAdding: .minute, value: workdayStartMinutes, to: day.start) ?? day.start
+        var end = calendar.date(byAdding: .minute, value: workdayEndMinutes, to: day.start) ?? day.end
+        if end <= start { end = start.addingTimeInterval(3600) }
+
+        let slices = accounting.slices
+        if let first = slices.first?.start, first < start {
+            start = calendar.dateInterval(of: .hour, for: first)?.start ?? first
+        }
+        if let last = slices.last?.end, last > end {
+            end = calendar.dateInterval(of: .hour, for: last.addingTimeInterval(-1))?.end ?? last
+        }
+        start = max(start, day.start)
+        end = min(end, day.end)
+        return DateInterval(start: start, end: end)
+    }
+
+    func setWorkday(startMinutes: Int, endMinutes: Int) {
+        workdayStartMinutes = min(23 * 60, max(0, startMinutes))
+        workdayEndMinutes = min(24 * 60, max(workdayStartMinutes + 30, endMinutes))
+        store.setSetting("workdayStartMinutes", String(workdayStartMinutes))
+        store.setSetting("workdayEndMinutes", String(workdayEndMinutes))
+    }
+
+    func setTimelineZoomToWorkHours(_ enabled: Bool) {
+        timelineZoomToWorkHours = enabled
+        store.setSetting("timelineZoomToWorkHours", enabled ? "1" : "0")
     }
 
     func reload() {
