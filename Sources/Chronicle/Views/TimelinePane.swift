@@ -5,28 +5,51 @@ import ChronicleCore
 struct TimelinePane: View {
     @EnvironmentObject var app: AppState
 
+    /// 右栏的精简形式：只有竖向时间轴，没有头部工具栏、悬浮卡片与下方树形明细。
+    var compact = false
+    /// 指定方向（右栏固定竖向），为 nil 时跟随全局设置。
+    var orientationOverride: TimelineOrientation?
+
     private let headerHeight: CGFloat = 58
+    private let compactHeaderHeight: CGFloat = 44
 
     @State private var hover: HoverCardData?
 
     var body: some View {
         GeometryReader { geo in
-            let timelineH = timelineHeight(in: geo.size.height)
+            let timelineH = compact
+                ? max(120, geo.size.height - compactHeaderHeight - 1)
+                : timelineHeight(in: geo.size.height)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
-                    header
+                    if compact { compactHeader } else { header }
                     Divider().overlay(Theme.divider.opacity(0.6))
                     if app.hasAnyData {
-                        DayTimelineView(entries: app.timelineEntries, usage: app.dayUsageRecords, hover: $hover)
-                            .frame(height: timelineH)
-                        Divider().overlay(Theme.divider.opacity(0.6))
-                        ActivityOutlineSection()
+                        DayTimelineView(
+                            entries: app.timelineEntries,
+                            usage: app.dayUsageRecords,
+                            hover: $hover,
+                            orientationOverride: orientation,
+                            zoomOverride: zoom
+                        )
+                        .frame(height: timelineH)
+                        if !compact {
+                            Divider().overlay(Theme.divider.opacity(0.6))
+                            ActivityOutlineSection()
+                        }
+                    } else if compact {
+                        Text("暂无记录")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.tertiary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .offset(y: -40)
                     } else {
                         WelcomeView()
                     }
                 }
 
-                if let hover {
+                // 右栏只有 296pt，放不下 452pt 的悬浮卡片。
+                if !compact, let hover {
                     let position = cardPosition(
                         hover,
                         paneWidth: geo.size.width,
@@ -40,7 +63,30 @@ struct TimelinePane: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.window)
+        .background(compact ? Theme.panel : Theme.window)
+    }
+
+    private var compactHeader: some View {
+        HStack(spacing: 6) {
+            Text("时间轴")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Theme.text)
+            Spacer()
+            Text(Fmt.sidebar(app.allTotal))
+                .font(.system(size: 10))
+                .monospacedDigit()
+                .foregroundColor(Theme.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: compactHeaderHeight)
+    }
+
+    private var orientation: TimelineOrientation {
+        orientationOverride ?? app.timelineOrientation
+    }
+
+    private var zoom: Double {
+        compact ? 1 : app.timelineZoom
     }
 
     /// 悬浮卡片：横向放在时间轴下方，竖向放在指针右侧，都限制在面板内。
@@ -53,7 +99,7 @@ struct TimelinePane: View {
         let cardWidth: CGFloat = 452
         let cardHeight: CGFloat = 190
 
-        if app.timelineOrientation.isHorizontal {
+        if orientation.isHorizontal {
             var x = hover.point.x - cardWidth / 2
             x = max(12, min(x, max(12, paneWidth - cardWidth - 34)))
             let timelineBottom = headerHeight + 1 + timelineHeight
@@ -73,7 +119,7 @@ struct TimelinePane: View {
 
     /// 时间轴高度：横向按三轨 + 重叠层数；竖向给更高的时间轴，方便看清细节。
     private func timelineHeight(in paneHeight: CGFloat) -> CGFloat {
-        if app.timelineOrientation.isHorizontal {
+        if orientation.isHorizontal {
             return min(340, max(196, 118 + CGFloat(laneCount) * 18))
         }
         return min(520, max(260, paneHeight * 0.5))
@@ -290,6 +336,10 @@ struct DayTimelineView: View {
     let entries: [TimeEntry]
     let usage: [AppUsageRecord]
     @Binding var hover: HoverCardData?
+    /// 右栏固定竖向时由宿主指定，为 nil 时跟随全局设置。
+    var orientationOverride: TimelineOrientation?
+    /// 右栏固定 1 倍，为 nil 时跟随全局缩放。
+    var zoomOverride: Double?
 
     private let timeInset: CGFloat = 8
 
@@ -299,7 +349,13 @@ struct DayTimelineView: View {
     @State private var drag: EntryDragState?
     @State private var scrollProxy = TimelineScrollProxy()
 
-    private var orientation: TimelineOrientation { app.timelineOrientation }
+    private var orientation: TimelineOrientation {
+        orientationOverride ?? app.timelineOrientation
+    }
+
+    private var zoom: Double {
+        zoomOverride ?? app.timelineZoom
+    }
 
     /// 时间刻度区厚度：横向在顶部 18pt，竖向在右侧 48pt。
     private var rulerThickness: CGFloat {
@@ -320,7 +376,7 @@ struct DayTimelineView: View {
                 rangeStart: range.start,
                 rangeEnd: range.end,
                 pixelsPerHour: metrics.pixelsPerHour(
-                    zoom: app.timelineZoom,
+                    zoom: zoom,
                     timeInset: timeInset,
                     rangeHours: CGFloat(range.duration / 3600)
                 ),
@@ -352,6 +408,8 @@ struct DayTimelineView: View {
                             .environmentObject(app)
                     ),
                     onMagnify: { magnification in
+                        // 右栏是固定 1 倍的缩略视图，捏合不改变缩放。
+                        guard zoomOverride == nil else { return }
                         hover = nil
                         hoverTime = nil
                         app.setTimelineZoom(app.timelineZoom * (1 + magnification))

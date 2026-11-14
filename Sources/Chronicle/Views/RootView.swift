@@ -52,8 +52,15 @@ struct RootView: View {
     private var content: some View {
         switch app.section {
         case .activity:
-            TimelinePane()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                TimelinePane()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Rectangle()
+                    .fill(Theme.divider)
+                    .frame(width: 1)
+                TimelinePane(compact: true, orientationOverride: .vertical)
+                    .frame(width: 296)
+            }
         case .stats:
             StatsView()
         case .reports:
