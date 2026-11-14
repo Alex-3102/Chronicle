@@ -105,6 +105,57 @@ final class AppState: ObservableObject {
     @Published var startTimerPresented = false
     @Published var settingsPresented = false
 
+    /// 统计页选中的范围（日 / 周 / 月 / 年）。
+    @Published var statisticsRange: StatisticsRange = .day
+    private var statisticsCache: [String: StatisticsSnapshot] = [:]
+
+    /// 统计快照：与应用口径、时间轴共用同一套 WorkSlice。
+    func statistics(_ range: StatisticsRange) -> StatisticsSnapshot {
+        let calendar = Calendar.current
+        let interval = StatisticsEngine.interval(for: range, day: selectedDay, calendar: calendar)
+        let key = [
+            range.rawValue,
+            String(interval.start.timeIntervalSince1970),
+            String(dataRevision),
+            isToday ? String(Int(now.timeIntervalSince1970)) : "0"
+        ].joined(separator: "|")
+        if let cached = statisticsCache[key] { return cached }
+
+        var records = store.usage(from: interval.start, to: interval.end)
+        if isToday {
+            let ids = Set(records.map(\.id))
+            records.append(contentsOf: tracker.liveUsage.filter { !ids.contains($0.id) })
+        }
+        let rangeEntries = store.entries(from: interval.start, to: interval.end)
+        let slices = TimeAccounting.slices(
+            usage: records,
+            entries: rangeEntries,
+            from: interval.start,
+            to: interval.end,
+            now: now
+        )
+        let snapshot = StatisticsSnapshot(
+            interval: interval,
+            range: range,
+            unit: StatisticsEngine.unit(for: range),
+            slices: slices,
+            buckets: StatisticsEngine.buckets(
+                slices: slices,
+                interval: interval,
+                unit: StatisticsEngine.unit(for: range),
+                calendar: calendar
+            ),
+            projects: StatisticsEngine.projectShares(slices: slices, projects: projects),
+            applications: StatisticsEngine.appShares(slices: slices),
+            entries: rangeEntries,
+            hourly: StatisticsEngine.hourly(slices: slices, calendar: calendar)
+        )
+        // 缓存只保留最近几份，避免按秒累积。
+        if statisticsCache.count > 12 { statisticsCache.removeAll() }
+        statisticsCache[key] = snapshot
+        return snapshot
+    }
+
     private var pinyinIndex = PinyinIndex()
     private var servicesStarted = false
     private var focusTicker: Timer?
