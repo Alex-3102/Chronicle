@@ -50,14 +50,9 @@ enum TimelineData {
         guard !records.isEmpty else { return [] }
 
         var names: [String: String] = [:]
-        var totals: [String: TimeInterval] = [:]
         for record in records {
             names[record.bundleID] = record.appName
-            let from = max(record.start, rangeStart)
-            let to = min(record.end, rangeEnd)
-            totals[record.bundleID, default: 0] += max(0, to.timeIntervalSince(from))
         }
-        let dominant = Set(totals.sorted { $0.value > $1.value }.prefix(10).map(\.key))
 
         if pixelsPerHour >= 600 {
             // 放大后展示真实活动区间，相邻且同应用的连续区间合并。
@@ -73,16 +68,15 @@ enum TimelineData {
                 }
             }
             return runs.map { run in
-                let isOther = !dominant.contains(run.bundleID)
                 return AppBandSegment(
                     id: "raw-\(run.bundleID)-\(run.start.timeIntervalSince1970)",
                     bundleID: run.bundleID,
                     name: names[run.bundleID] ?? run.bundleID,
-                    color: isOther ? Theme.tertiary : color(run.bundleID),
+                    color: color(run.bundleID),
                     start: run.start,
                     end: run.end,
                     isBucketed: false,
-                    isOther: isOther
+                    isOther: false
                 )
             }
         }
@@ -129,94 +123,58 @@ enum TimelineData {
         }
 
         return runs.map { run in
-            let isOther = !dominant.contains(run.bundleID)
             let start = rangeStart.addingTimeInterval(Double(run.from) * bucketSeconds)
             let end = min(rangeEnd, rangeStart.addingTimeInterval(Double(run.to + 1) * bucketSeconds))
             return AppBandSegment(
                 id: "bucket-\(run.bundleID)-\(run.from)",
                 bundleID: run.bundleID,
                 name: names[run.bundleID] ?? run.bundleID,
-                color: isOther ? Theme.tertiary : color(run.bundleID),
+                color: color(run.bundleID),
                 start: start,
                 end: end,
                 isBucketed: true,
-                isOther: isOther
+                isOther: false
             )
         }
     }
 
-    /// 项目归属：把时间条目按起止边界切成互不重叠的切片（[start, end)），
-    /// 开始时间较晚的条目优先，再合并相邻同项目切片。
+    /// 项目归属：直接使用统一快照的归属区间（条目优先、其次应用自身归属）。
+    /// 只有实际有活动或条目的区间才绘制色带，不再把整天画成「未分配」。
     static func projectSpans(
-        entries: [TimeEntry],
+        spans: [WorkSpan],
         range: DateInterval,
         color: @escaping (String?) -> Color
     ) -> [ProjectBandSpan] {
-        let clipped = entries
-            .filter { $0.end > range.start && $0.start < range.end }
-            .sorted { $0.start < $1.start }
-        guard !clipped.isEmpty else {
-            return [ProjectBandSpan(
-                id: "unassigned-all",
-                projectID: nil,
-                color: color(nil),
-                start: range.start,
-                end: range.end
-            )]
-        }
-
-        var boundaries = Set<Date>()
-        boundaries.insert(range.start)
-        boundaries.insert(range.end)
-        for entry in clipped {
-            boundaries.insert(max(entry.start, range.start))
-            boundaries.insert(min(entry.end, range.end))
-        }
-        let sorted = boundaries.sorted()
-
-        var spans: [ProjectBandSpan] = []
-        for index in 0..<(sorted.count - 1) {
-            let from = sorted[index]
-            let to = sorted[index + 1]
+        var result: [ProjectBandSpan] = []
+        for span in spans {
+            let from = max(span.start, range.start)
+            let to = min(span.end, range.end)
             guard to > from else { continue }
-
-            // 覆盖该切片的条目里，非应用来源优先、开始时间晚的优先、id 稳定兜底。
-            let covering = clipped
-                .filter { $0.start <= from && $0.end > from }
-                .sorted { lhs, rhs in
-                    if (lhs.source == .app) != (rhs.source == .app) { return rhs.source == .app }
-                    if lhs.start != rhs.start { return lhs.start > rhs.start }
-                    return lhs.id < rhs.id
-                }
-                .first
-            let projectID = covering?.projectID
-
-            if let last = spans.last, last.projectID == projectID {
-                spans[spans.count - 1] = ProjectBandSpan(
+            if let last = result.last, last.projectID == span.projectID, last.end >= from {
+                result[result.count - 1] = ProjectBandSpan(
                     id: last.id,
                     projectID: last.projectID,
                     color: last.color,
                     start: last.start,
-                    end: to
+                    end: max(last.end, to)
                 )
             } else {
-                spans.append(ProjectBandSpan(
-                    id: "span-\(from.timeIntervalSince1970)-\(projectID ?? "none")",
-                    projectID: projectID,
-                    color: color(projectID),
+                result.append(ProjectBandSpan(
+                    id: "span-\(from.timeIntervalSince1970)-\(span.projectID ?? "none")",
+                    projectID: span.projectID,
+                    color: color(span.projectID),
                     start: from,
                     end: to
                 ))
             }
         }
-        return spans
+        return result
     }
 
     /// 时间条目：重叠条目分子轨道，横向上下并排、竖向左右并排。
     static func entryBlocks(
         entries: [TimeEntry],
         range: DateInterval,
-        maxLanes: Int,
         color: @escaping (String?) -> Color,
         dimmed: @escaping (TimeEntry) -> Bool
     ) -> [TimelineEntryBlock] {
@@ -240,7 +198,8 @@ enum TimelineData {
             result.append(TimelineEntryBlock(
                 id: entry.id,
                 entry: entry,
-                lane: min(lane, max(1, maxLanes) - 1),
+                // 保留真实 lane，不把多余的重叠条目压到最后一层（否则会互相覆盖）。
+                lane: lane,
                 color: color(entry.projectID),
                 dimmed: dimmed(entry)
             ))

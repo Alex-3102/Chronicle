@@ -510,10 +510,10 @@ struct DayTimelineView: View {
             ) else { continue }
             let radius = min(4, min(rect.width, rect.height) / 2)
             let shape = Path(roundedRect: rect, cornerRadius: radius)
-            context.fill(shape, with: .color(segment.color.opacity(segment.isOther ? 0.22 : 0.55)))
+            context.fill(shape, with: .color(segment.color.opacity(0.55)))
 
             let shortSide = min(rect.width, rect.height)
-            if !segment.isOther, shortSide >= 16,
+            if shortSide >= 16,
                let icon = AppIconCache.shared.icon(for: segment.bundleID) {
                 let image = context.resolve(Image(nsImage: icon))
                 let side = shortSide - 6
@@ -607,14 +607,13 @@ struct DayTimelineView: View {
             color: { Theme.appColor(for: $0) }
         )
         let projects = TimelineData.projectSpans(
-            entries: entries,
+            spans: app.accounting.spans,
             range: range,
             color: { app.color(for: $0) }
         )
         let blocks = TimelineData.entryBlocks(
             entries: entries,
             range: range,
-            maxLanes: layout.entryLaneCount,
             color: { app.color(for: $0) },
             dimmed: { !app.isInSelection($0) }
         )

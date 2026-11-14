@@ -73,6 +73,12 @@ public struct AppUsageRecord: Identifiable, Hashable {
     public var end: Date
     /// 前台窗口标题（需要屏幕录制权限，取不到时为 nil）
     public var windowTitle: String?
+    /// 应用记录自身归属的项目；没有手动条目时用它在项目轨道上着色
+    public var projectID: String?
+    /// 浏览时的地址（浏览器类应用）
+    public var url: String?
+    /// 编辑的文件路径（文档类应用）
+    public var filePath: String?
 
     public var duration: TimeInterval { max(0, end.timeIntervalSince(start)) }
 
@@ -82,7 +88,10 @@ public struct AppUsageRecord: Identifiable, Hashable {
         appName: String,
         start: Date,
         end: Date,
-        windowTitle: String? = nil
+        windowTitle: String? = nil,
+        projectID: String? = nil,
+        url: String? = nil,
+        filePath: String? = nil
     ) {
         self.id = id
         self.bundleID = bundleID
@@ -90,6 +99,9 @@ public struct AppUsageRecord: Identifiable, Hashable {
         self.start = start
         self.end = end
         self.windowTitle = windowTitle
+        self.projectID = projectID
+        self.url = url
+        self.filePath = filePath
     }
 }
 

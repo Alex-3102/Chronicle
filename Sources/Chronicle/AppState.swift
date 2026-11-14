@@ -101,6 +101,9 @@ final class AppState: ObservableObject {
     private var clockTicker: Timer?
     private var accessibilityTicker: Timer?
     private var cancellables = Set<AnyCancellable>()
+    /// 条目 / 应用数据每次整体重载后递增，用于共享快照的缓存键。
+    private var dataRevision = 0
+    private var accountingCache: (key: String, snapshot: AccountingSnapshot)?
 
     lazy var tempWindow = TempTimerWindowController(appState: self)
 
@@ -286,6 +289,8 @@ final class AppState: ObservableObject {
         entries = store.entries(from: interval.start, to: interval.end)
         usage = store.usage(from: interval.start, to: interval.end)
         projectTotals = store.projectTotals(from: interval.start, to: interval.end)
+        dataRevision &+= 1
+        accountingCache = nil
     }
 
     func refreshProjects() {
@@ -423,34 +428,62 @@ final class AppState: ObservableObject {
     }
 
     var allTotal: TimeInterval {
-        max(assignedTotal, trackedTotal)
+        accounting.total
     }
 
     /// 当天前台应用实际使用时长（合并重叠区间）
     var trackedTotal: TimeInterval {
-        let interval = dayInterval
-        let records = (isToday ? tracker.liveUsage : usage)
-            .filter { $0.end > interval.start && $0.start < interval.end }
-            .sorted { $0.start < $1.start }
-        var total: TimeInterval = 0
-        var cursor = interval.start
-        for record in records {
-            let from = max(record.start, interval.start)
-            let to = min(record.end, interval.end)
-            guard to > from, to > cursor else { continue }
-            total += to.timeIntervalSince(max(from, cursor))
-            cursor = to
+        let intervals = accounting.slices.compactMap { slice -> DateInterval? in
+            guard slice.activity != nil else { return nil }
+            return DateInterval(start: slice.start, end: slice.end)
         }
-        return total
+        return TimeAccounting.unionDuration(intervals)
     }
 
-    /// 未分配 = 应用使用总时长 − 已归入项目的时长
+    /// 未分配 = 切片总时长 − 已归入项目的时长
     var unassignedTotal: TimeInterval {
-        max(0, allTotal - assignedTotal)
+        max(0, accounting.total - assignedTotal)
     }
 
     var assignedTotal: TimeInterval {
-        entries.filter { $0.projectID != nil }.reduce(0) { $0 + clampedDuration($1) }
+        accounting.slices.reduce(0) { $0 + ($1.projectID == nil ? 0 : $1.duration) }
+    }
+
+    // MARK: - 统一时间快照
+
+    /// 当天所有页面的唯一口径：应用活动 + 时间条目切成互不重叠的切片。
+    var accounting: AccountingSnapshot {
+        let interval = dayInterval
+        let live = isToday ? tracker.liveUsage : usage
+        let key = [
+            String(interval.start.timeIntervalSince1970),
+            String(dataRevision),
+            String(entries.count),
+            String(live.count),
+            isToday ? String(Int(now.timeIntervalSince1970)) : "0"
+        ].joined(separator: "|")
+        if let cache = accountingCache, cache.key == key {
+            return cache.snapshot
+        }
+        let snapshot = AccountingSnapshot.make(
+            usage: live,
+            entries: entries,
+            range: interval,
+            now: now
+        )
+        accountingCache = (key, snapshot)
+        return snapshot
+    }
+
+    /// 把条目和应用记录一起分配到项目，供拖拽与右键菜单复用。
+    func assign(entryIDs: [String], activityIDs: [String] = [], to projectID: String?) {
+        for id in entryIDs {
+            guard var entry = entries.first(where: { $0.id == id }) else { continue }
+            entry.projectID = projectID
+            store.addEntry(entry)
+        }
+        store.assignUsage(ids: activityIDs, projectID: projectID)
+        reload()
     }
 
     // MARK: - 当前筛选范围

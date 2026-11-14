@@ -76,12 +76,21 @@ public final class ChronicleStore {
         }
     }
 
-    /// 旧库升级：应用使用记录增加窗口标题。
+    /// 旧库升级：应用使用记录增加窗口标题、项目归属、URL 与文件路径。
     private func migrateUsageColumns() {
         let columns = (try? db.query("PRAGMA table_info(app_usage)")) ?? []
         let names = Set(columns.compactMap { $0.text("name") })
         if !names.contains("window_title") {
             try? db.run("ALTER TABLE app_usage ADD COLUMN window_title TEXT")
+        }
+        if !names.contains("project_id") {
+            try? db.run("ALTER TABLE app_usage ADD COLUMN project_id TEXT")
+        }
+        if !names.contains("url") {
+            try? db.run("ALTER TABLE app_usage ADD COLUMN url TEXT")
+        }
+        if !names.contains("file_path") {
+            try? db.run("ALTER TABLE app_usage ADD COLUMN file_path TEXT")
         }
     }
 
@@ -216,21 +225,24 @@ public final class ChronicleStore {
     public func recordUsage(_ record: AppUsageRecord, minimumDuration: TimeInterval = 1) {
         guard record.duration >= minimumDuration else { return }
         try? db.run("""
-        INSERT OR REPLACE INTO app_usage (id, bundle_id, app_name, start_at, end_at, window_title)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO app_usage (id, bundle_id, app_name, start_at, end_at, window_title, project_id, url, file_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
             .text(record.id),
             .text(record.bundleID),
             .text(record.appName),
             .double(record.start.timeIntervalSince1970),
             .double(record.end.timeIntervalSince1970),
-            record.windowTitle.map { .text($0) } ?? .null
+            record.windowTitle.map { .text($0) } ?? .null,
+            record.projectID.map { .text($0) } ?? .null,
+            record.url.map { .text($0) } ?? .null,
+            record.filePath.map { .text($0) } ?? .null
         ])
     }
 
     public func usage(from: Date, to: Date) -> [AppUsageRecord] {
         let rows = (try? db.query("""
-        SELECT id, bundle_id, app_name, start_at, end_at, window_title
+        SELECT id, bundle_id, app_name, start_at, end_at, window_title, project_id, url, file_path
         FROM app_usage
         WHERE end_at > ? AND start_at < ?
         ORDER BY start_at ASC
@@ -248,9 +260,21 @@ public final class ChronicleStore {
                 appName: appName,
                 start: Date(timeIntervalSince1970: start),
                 end: Date(timeIntervalSince1970: end),
-                windowTitle: row.text("window_title")
+                windowTitle: row.text("window_title"),
+                projectID: row.text("project_id"),
+                url: row.text("url"),
+                filePath: row.text("file_path")
             )
         }
+    }
+
+    /// 把一批应用记录分配到项目；传 nil 表示移回未分配。
+    public func assignUsage(ids: [String], projectID: String?) {
+        guard !ids.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        var params: [SQLValue] = [projectID.map(SQLValue.text) ?? .null]
+        params.append(contentsOf: ids.map { SQLValue.text($0) })
+        try? db.run("UPDATE app_usage SET project_id = ? WHERE id IN (\(placeholders))", params)
     }
 
     public func usageTotals(records: [AppUsageRecord], from: Date, to: Date) -> [AppUsageTotal] {
